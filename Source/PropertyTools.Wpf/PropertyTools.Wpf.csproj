@@ -21,9 +21,6 @@
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\PropertyTools\PropertyTools.csproj" />
-  </ItemGroup>
-  <ItemGroup>
     <None Include="PropertyTools.snk" />
   </ItemGroup>
   <ItemGroup Condition=" '$(TargetFramework)' == 'net462' ">

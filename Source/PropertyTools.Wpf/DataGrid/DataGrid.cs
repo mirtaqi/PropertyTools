@@ -17,6 +17,7 @@ namespace PropertyTools.Wpf
     using System.ComponentModel;
     using System.Diagnostics;
     using System.Linq;
+    using System.Runtime.Serialization;
     using System.Text;
     using System.Windows;
     using System.Windows.Controls;
@@ -28,6 +29,7 @@ namespace PropertyTools.Wpf
     using System.Windows.Threading;
 
     using PropertyTools.DataAnnotations;
+    using PropertyTools.Wpf.Operators;
 
     /// <summary>
     /// Displays enumerable data in a customizable grid.
@@ -124,6 +126,33 @@ namespace PropertyTools.Wpf
             new UIPropertyMetadata(true));
 
         /// <summary>
+        /// Identifies the <see cref="CanCopy"/> dependency property.
+        /// </summary>
+        public static readonly DependencyProperty CanCopyProperty = DependencyProperty.Register(
+            nameof(CanCopy),
+            typeof(bool),
+            typeof(DataGrid),
+            new UIPropertyMetadata(true));
+
+        /// <summary>
+        /// Identifies the <see cref="CanCut"/> dependency property.
+        /// </summary>
+        public static readonly DependencyProperty CanCutProperty = DependencyProperty.Register(
+            nameof(CanCut),
+            typeof(bool),
+            typeof(DataGrid),
+            new UIPropertyMetadata(true));
+
+        /// <summary>
+        /// Identifies the <see cref="CanPaste"/> dependency property.
+        /// </summary>
+        public static readonly DependencyProperty CanPasteProperty = DependencyProperty.Register(
+            nameof(CanPaste),
+            typeof(bool),
+            typeof(DataGrid),
+            new UIPropertyMetadata(true));
+
+        /// <summary>
         /// Identifies the <see cref="CanDelete"/> dependency property.
         /// </summary>
         public static readonly DependencyProperty CanDeleteProperty = DependencyProperty.Register(
@@ -158,6 +187,15 @@ namespace PropertyTools.Wpf
                 typeof(bool),
                 typeof(DataGrid),
                 new UIPropertyMetadata(true));
+
+        /// <summary>
+        /// Identifies the <see cref="ClipboardSeparator"/> dependency property.
+        /// </summary>
+        public static readonly DependencyProperty ClipboardSeparatorProperty = DependencyProperty.Register(
+                nameof(ClipboardSeparator),
+                typeof(string),
+                typeof(DataGrid),
+                new UIPropertyMetadata(null));
 
         /// <summary>
         /// Identifies the <see cref="MultiChangeInChangedColumnOnly"/> dependency property.
@@ -415,6 +453,25 @@ namespace PropertyTools.Wpf
             typeof(DataGrid),
             new UIPropertyMetadata(false));
 
+
+        /// <summary>
+        /// Identifies the <see cref="LocalizableOperator"/> dependency property.
+        /// </summary>
+        public static readonly DependencyProperty LocalizableOperatorProperty = DependencyProperty.Register(
+            nameof(LocalizableOperator),
+            typeof(ILocalizableOperator),
+            typeof(DataGrid),
+            new PropertyMetadata(null, (d, e) =>
+            {
+                var newLocalizableOperator = (ILocalizableOperator)e.NewValue;
+                var operatorValue = ((DataGrid)d).Operator;
+                if (operatorValue != null)
+                {
+                    operatorValue.UseLocalizableOperator(newLocalizableOperator);
+                }
+            })
+            );
+
         /// <summary>
         /// The auto fill box.
         /// </summary>
@@ -597,6 +654,17 @@ namespace PropertyTools.Wpf
         private bool endPressed;
 
         /// <summary>
+        /// The mouse position in screen coordinates when left button was pressed.
+        /// Used to distinguish click from drag even when control coordinates shift during scroll.
+        /// </summary>
+        private Point? mouseDownPositionOnScreen;
+
+        /// <summary>
+        /// Indicates whether a range-selection drag has started for the current mouse capture.
+        /// </summary>
+        private bool isRangeSelectionDrag;
+
+        /// <summary>
         /// The sheet grid control.
         /// </summary>
         private Grid sheetGrid;
@@ -764,6 +832,36 @@ namespace PropertyTools.Wpf
         }
 
         /// <summary>
+        /// Gets or sets a value indicating whether this grid can copy cells.
+        /// </summary>
+        /// <value><c>true</c> if this instance can copy; otherwise, <c>false</c> .</value>
+        public bool CanCopy
+        {
+            get => (bool)this.GetValue(CanCopyProperty);
+            set => this.SetValue(CanCopyProperty, value);
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether this grid can cut cells.
+        /// </summary>
+        /// <value><c>true</c> if this instance can cut; otherwise, <c>false</c> .</value>
+        public bool CanCut
+        {
+            get => (bool)this.GetValue(CanCutProperty);
+            set => this.SetValue(CanCutProperty, value);
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether this grid can paste cells.
+        /// </summary>
+        /// <value><c>true</c> if this instance can paste; otherwise, <c>false</c> .</value>
+        public bool CanPaste
+        {
+            get => (bool)this.GetValue(CanPasteProperty);
+            set => this.SetValue(CanPasteProperty, value);
+        }
+
+        /// <summary>
         /// Gets or sets a value indicating whether this instance can delete.
         /// </summary>
         /// <value><c>true</c> if this instance can delete; otherwise, <c>false</c> .</value>
@@ -801,6 +899,20 @@ namespace PropertyTools.Wpf
         {
             get => (bool)this.GetValue(CanResizeRowsProperty);
             set => this.SetValue(CanResizeRowsProperty, value);
+        }
+
+        /// <summary>
+        /// Gets or sets the separator used when copying cell data to the clipboard via <c>Ctrl+Alt+C</c>.
+        /// When not explicitly set, the current culture's list separator is used
+        /// (<see cref="System.Globalization.CultureInfo.CurrentCulture"/> TextInfo.ListSeparator,
+        /// e.g. <c>","</c> for en-US or <c>";"</c> for de-DE).
+        /// Set this property to override the separator for a specific instance, or subclass and override to apply it globally.
+        /// </summary>
+        /// <value>The clipboard separator string.</value>
+        public string ClipboardSeparator
+        {
+            get => (string)this.GetValue(ClipboardSeparatorProperty) ?? System.Globalization.CultureInfo.CurrentCulture.TextInfo.ListSeparator;
+            set => this.SetValue(ClipboardSeparatorProperty, value);
         }
 
         /// <summary>
@@ -1174,9 +1286,37 @@ namespace PropertyTools.Wpf
         public bool ItemsInColumns { get; private set; }
 
         /// <summary>
+        /// Gets or sets the localizable operator.
+        /// </summary>        
+        public ILocalizableOperator LocalizableOperator
+        {
+            get => (ILocalizableOperator)this.GetValue(LocalizableOperatorProperty);
+            set => this.SetValue(LocalizableOperatorProperty, value);
+        }
+
+        private IDataGridOperator _operator;
+        /// <summary>
         /// Gets the operator.
         /// </summary>
-        public IDataGridOperator Operator { get; private set; }
+        public IDataGridOperator Operator
+        {
+            get
+            {
+                return _operator;
+            }
+            private set
+            {
+                if (_operator != value)
+                {
+                    _operator = value;
+
+                    if (_operator != null && LocalizableOperator != null)
+                    {
+                        _operator.UseLocalizableOperator(LocalizableOperator);
+                    }
+                }
+            }
+        }
 
         /// <summary>
         /// Gets the row/column definitions.
@@ -1299,10 +1439,10 @@ namespace PropertyTools.Wpf
             this.UpdateGridContent();
             this.SelectedCellsChanged();
 
-            this.CommandBindings.Add(new CommandBinding(ApplicationCommands.Copy, (s, e) => this.Copy()));
-            this.CommandBindings.Add(new CommandBinding(ApplicationCommands.Cut, (s, e) => this.Cut()));
-            this.CommandBindings.Add(new CommandBinding(ApplicationCommands.Paste, (s, e) => this.Paste()));
-            this.CommandBindings.Add(new CommandBinding(ApplicationCommands.Delete, (s, e) => this.Clear(), (s, e) => e.CanExecute = this.CanClear));
+            this.CommandBindings.Add(new CommandBinding(ApplicationCommands.Copy, (s, e) => this.Copy(), (s, e) => e.CanExecute = this.CanCopy && this.HasValidSelection()));
+            this.CommandBindings.Add(new CommandBinding(ApplicationCommands.Cut, (s, e) => this.Cut(), (s, e) => e.CanExecute = this.CanCut && this.CanModifySelection()));
+            this.CommandBindings.Add(new CommandBinding(ApplicationCommands.Paste, (s, e) => this.Paste(), (s, e) => e.CanExecute = this.CanPaste && this.CanModifySelection() && this.ClipboardContainsText()));
+            this.CommandBindings.Add(new CommandBinding(ApplicationCommands.Delete, (s, e) => this.Clear(), (s, e) => e.CanExecute = this.CanClear && this.CanModifySelection()));
         }
 
         /// <summary>
@@ -1332,6 +1472,74 @@ namespace PropertyTools.Wpf
         public void Paste()
         {
             this.PasteOverride();
+        }
+
+        /// <summary>
+        /// Determines whether there is a valid cell selection.
+        /// </summary>
+        /// <returns><c>true</c> if there is a valid selection; otherwise, <c>false</c>.</returns>
+        protected virtual bool HasValidSelection()
+        {
+            // Check if grid has data
+            if (this.ItemsSource == null || this.ItemsSource.Count == 0)
+            {
+                return false;
+            }
+
+            var range = this.GetSelectionRange();
+            return range.TopRow >= 0 && range.LeftColumn >= 0;
+        }
+
+        /// <summary>
+        /// Determines whether the current selection can be modified (not read-only).
+        /// Checks column-level IsReadOnly for all columns in the selection.
+        /// </summary>
+        /// <returns><c>true</c> if at least one cell in selection is editable; otherwise, <c>false</c>.</returns>
+        protected virtual bool CanModifySelection()
+        {
+            // Check if grid has data
+            if (this.ItemsSource == null || this.ItemsSource.Count == 0)
+            {
+                return false;
+            }
+
+            var range = this.GetSelectionRange();
+            if (range.TopRow < 0 || range.LeftColumn < 0)
+            {
+                return false;
+            }
+
+            // Check if any column in the selection is editable
+            for (var col = range.LeftColumn; col <= range.RightColumn; col++)
+            {
+                if (col < this.PropertyDefinitions.Count)
+                {
+                    var colDef = this.PropertyDefinitions[col];
+                    if (colDef != null && !colDef.IsReadOnly)
+                    {
+                        return true; // At least one column is editable
+                    }
+                }
+            }
+
+            return false; // All columns in selection are read-only
+        }
+
+        /// <summary>
+        /// Determines whether the clipboard contains text.
+        /// </summary>
+        /// <returns><c>true</c> if clipboard contains text; otherwise, <c>false</c>.</returns>
+        protected virtual bool ClipboardContainsText()
+        {
+            try
+            {
+                return Clipboard.ContainsText();
+            }
+            catch
+            {
+                // Clipboard may be locked by another process
+                return false;
+            }
         }
 
         /// <summary>
@@ -1388,16 +1596,48 @@ namespace PropertyTools.Wpf
 
             this.suspendCollectionChangedNotifications = true;
 
+            // When sorting is active, we need to handle insertions carefully:
+            // 1. For existing rows, TrySetCellValue already handles view-to-source index conversion correctly
+            // 2. For new rows, we must add them at the END of the source collection first,
+            //    then set their values using the updated view indices
+
+            // Phase 1: Count how many new rows we need to add
+            // Use Operator.GetRowCount() instead of this.Rows to work in test environments
+            var currentRowCount = this.Operator?.GetRowCount() ?? 0;
+            var newRowsNeeded = Math.Max(0, outputRange.BottomRow - currentRowCount + 1);
+
+            // Phase 2: Add new rows at the end of the source collection
+            for (var rowIndex = 0; rowIndex < newRowsNeeded; rowIndex++)
+            {
+                if (!this.CanInsertRows)
+                {
+                    break;
+                }
+
+                // Insert at the end (-1 means append to end)
+                var insertedIndex = this.Operator.InsertItem(-1);
+                if (insertedIndex < 0)
+                {
+                    break;
+                }
+            }
+
+            // Phase 3: Update the collection view if we added items
+            if (newRowsNeeded > 0)
+            {
+                this.UpdateCollectionView();
+                this.UpdateGridContent();
+            }
+
+            // Phase 4: Set values for all cells (both existing and new rows)
+            // TrySetCellValue handles view-to-source index conversion via GetItem -> GetItemsSourceIndex
+            var updatedRowCount = this.Operator?.GetRowCount() ?? 0;
             for (var i = range.TopRow; i <= outputRange.BottomRow; i++)
             {
-                if (i >= this.Rows)
+                // Check if row exists after potential insertions
+                if (i >= updatedRowCount)
                 {
-                    if (!this.CanInsertRows)
-                    {
-                        break;
-                    }
-
-                    this.Operator.InsertRows(i, 1);
+                    break;
                 }
 
                 for (var j = range.LeftColumn; j <= outputRange.RightColumn; j++)
@@ -1409,7 +1649,7 @@ namespace PropertyTools.Wpf
                             break;
                         }
 
-                        this.Operator.InsertColumns(i, 1);
+                        this.Operator.InsertColumns(j, 1);
                     }
 
                     var value = values[(i - outputRange.TopRow) % rows, (j - outputRange.LeftColumn) % columns];
@@ -1435,8 +1675,16 @@ namespace PropertyTools.Wpf
             var dataObject = Clipboard.GetDataObject();
             if (dataObject != null)
             {
-                var data = dataObject.GetData(typeof(DataGrid));
-                values = data as object[,];
+                try
+                {
+                    var data = dataObject.GetData(typeof(DataGrid));
+                    values = data as object[,];
+                }
+                catch (SerializationException)
+                {
+                    // Ignore SerializationException for non-serializable clipboard data
+                    // Will fall back to text-based clipboard data below
+                }
             }
 
             if (values == null && Clipboard.ContainsText())
@@ -1580,7 +1828,7 @@ namespace PropertyTools.Wpf
             }
 
             var strings = this.GetCellStrings(range);
-            var csv = this.ConvertToCsv(strings, ";", true);
+            var csv = this.ConvertToCsv(strings, separator, true);
             sb.Append(csv);
 
             return sb.ToString();
@@ -1610,6 +1858,9 @@ namespace PropertyTools.Wpf
         {
             this.Focus();
             base.OnMouseLeftButtonDown(e);
+
+            this.mouseDownPositionOnScreen = this.PointToScreen(e.GetPosition(this));
+            this.isRangeSelectionDrag = false;
 
             var pos = e.GetPosition(this.sheetGrid);
             var cellRef = this.GetCell(pos);
@@ -1664,6 +1915,9 @@ namespace PropertyTools.Wpf
         {
             this.OnMouseUp(e);
 
+            this.mouseDownPositionOnScreen = null;
+            this.isRangeSelectionDrag = false;
+
             this.ReleaseMouseCapture();
             Mouse.OverrideCursor = null;
 
@@ -1690,6 +1944,26 @@ namespace PropertyTools.Wpf
             }
 
             var isInAutoFillMode = this.autoFillSelection.Visibility == Visibility.Visible;
+
+            if (!isInAutoFillMode)
+            {
+                if (!this.isRangeSelectionDrag)
+                {
+                    var currentPositionOnScreen = this.PointToScreen(e.GetPosition(this));
+                    if (this.mouseDownPositionOnScreen.HasValue)
+                    {
+                        var horizontalDragDistance = Math.Abs(currentPositionOnScreen.X - this.mouseDownPositionOnScreen.Value.X);
+                        var verticalDragDistance = Math.Abs(currentPositionOnScreen.Y - this.mouseDownPositionOnScreen.Value.Y);
+                        if (horizontalDragDistance < SystemParameters.MinimumHorizontalDragDistance
+                            && verticalDragDistance < SystemParameters.MinimumVerticalDragDistance)
+                        {
+                            return;
+                        }
+                    }
+
+                    this.isRangeSelectionDrag = true;
+                }
+            }
 
             var pos = e.GetPosition(this.sheetGrid);
             var cellRef = this.GetCell(pos, isInAutoFillMode, this.CurrentCell);
@@ -1949,7 +2223,7 @@ namespace PropertyTools.Wpf
                 case Key.C:
                     if (control && alt)
                     {
-                        Clipboard.SetText(this.ToCsv(this.GetSelectionRange()));
+                        Clipboard.SetText(this.ToCsv(this.GetSelectionRange(), this.ClipboardSeparator));
                         e.Handled = true;
                     }
 
@@ -2123,7 +2397,7 @@ namespace PropertyTools.Wpf
         /// <returns>
         /// An array of cell strings.
         /// </returns>
-        protected string[,] GetCellStrings(CellRange range, object[,] values = null)
+        protected virtual string[,] GetCellStrings(CellRange range, object[,] values = null)
         {
             var result = new string[range.Rows, range.Columns];
             for (var i = 0; i < range.Rows; i++)
@@ -3403,6 +3677,32 @@ namespace PropertyTools.Wpf
                 return;
             }
 
+            if (e.Action == NotifyCollectionChangedAction.Replace && e.NewStartingIndex >= 0)
+            {
+                // For Replace actions (e.g. list[i] = newValue), only update the affected cell(s)
+                // instead of rebuilding the entire grid content.
+                this.Dispatcher.Invoke(
+                    new Action(() =>
+                    {
+                        for (int i = 0; i < e.NewItems.Count; i++)
+                        {
+                            var index = e.NewStartingIndex + i;
+
+                            // Update all columns/rows for this item
+                            var count = this.ItemsInRows ? this.Columns : this.Rows;
+                            for (int j = 0; j < count; j++)
+                            {
+                                var cellRef = this.ItemsInRows
+                                    ? new CellRef(index, j)
+                                    : new CellRef(j, index);
+                                this.UpdateCellContent(cellRef);
+                            }
+                        }
+                    }));
+
+                return;
+            }
+
             this.Dispatcher.Invoke(this.UpdateGridContent);
         }
 
@@ -3771,9 +4071,15 @@ namespace PropertyTools.Wpf
                 if (cell.Row >= this.Rows)
                 {
                     var actualIndex = this.Rows;
-                    this.Operator.InsertRows(actualIndex, 1);
+                    var insertedSourceIndex = this.Operator.InsertItem(actualIndex);
+                    if (insertedSourceIndex < 0)
+                    {
+                        // Insertion failed (e.g., the data source does not support adding items via IList)
+                        return false;
+                    }
+
                     this.CollectionView?.Refresh();
-                    actualIndex = this.Operator.GetCollectionViewIndex(actualIndex);
+                    actualIndex = this.Operator.GetCollectionViewIndex(insertedSourceIndex);
                     actualCell = new CellRef(actualIndex, cell.Column);
                 }
 
@@ -3960,7 +4266,18 @@ namespace PropertyTools.Wpf
             this.sheetGrid.Children.Add(this.selectionBackground);
             this.sheetGrid.Children.Add(this.currentBackground);
 
-            // Add row lines to the sheet
+            this.cellInsertionIndex = this.sheetGrid.Children.Count;
+
+            // Add all cells to the sheet FIRST
+            for (var i = 0; i < rows; i++)
+            {
+                for (var j = 0; j < columns; j++)
+                {
+                    this.InsertDisplayControl(new CellRef(i, j));
+                }
+            }
+
+            // Add row lines to the sheet AFTER cells (higher z-index)
             for (var i = 1; i <= rows; i++)
             {
                 var border = new Border
@@ -3986,7 +4303,7 @@ namespace PropertyTools.Wpf
 
             if (rows > 0)
             {
-                // Add column lines to the sheet
+                // Add column lines to the sheet AFTER cells (higher z-index)
                 for (var i = 0; i < columns; i++)
                 {
                     if (i == 0 && columns > 1)
@@ -4004,17 +4321,6 @@ namespace PropertyTools.Wpf
                     Grid.SetRowSpan(border, rows);
                     Grid.SetColumn(border, i);
                     this.sheetGrid.Children.Add(border);
-                }
-            }
-
-            this.cellInsertionIndex = this.sheetGrid.Children.Count;
-
-            // Add all cells to the sheet
-            for (var i = 0; i < rows; i++)
-            {
-                for (var j = 0; j < columns; j++)
-                {
-                    this.InsertDisplayControl(new CellRef(i, j));
                 }
             }
 
